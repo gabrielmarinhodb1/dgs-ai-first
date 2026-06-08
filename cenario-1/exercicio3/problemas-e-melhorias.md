@@ -1,71 +1,109 @@
 # Problemas Identificados e Propostas de Melhoria
 
-## 1. Ranking Subótimo (Hit@1 = 0%)
+## Resumo Executivo
 
-### Problema
-- **Métrica:** Hit@1 = 0% (resposta correta **nunca** aparece em posição 1)
-- **Evidência:** Pergunta 4 ("Posso devolver carga perigosa?") teve a resposta correta (POL-001 3.2) apenas em **posição 4**
-- **Impacto:** LLM recebe contexto desordenado; chunk correto não é priorizado
-
-### Causa Raiz
-Similaridade por cosseno pura não captura:
-- Especificidade da pergunta em relação ao documento
-- Hierarquia de relevância semântica
-- Contexto de domínio (não diferencia "perigosa em frete" vs "perigosa em devolução")
-
-### Propostas de Solução
-
-#### Correção 1 (Curto Prazo): Reranking com Cross-Encoder
-- Implementar reranking layer usando modelo cross-encoder (ex: `ms-marco-MiniLM-L-12-v2`)
-- Pipeline: Dense Retrieval (5 chunks) → Cross-Encoder Reranking → Top-1
-- **Benefício estimado:** Hit@1 pode aumentar para 80%+
-- **Complexidade:** Média (adiciona ~100ms latência)
-
-#### Correção 2 (Médio Prazo): Filtragem de Categoria Pré/Pós-Query
-- **Pré-query:** Classificar pergunta em categoria (devolução, frete, SLA, etc.)
-- **Pós-retrieval:** Filtrar chunks para categoria inferida; aplicar soft weights
-- **Benefício estimado:** Reduz ruído em 50%; Hit@1 sobe para 60%+
-- **Complexidade:** Média (requer treinamento de classificador ou LLM)
-
-#### Correção 3 (Longo Prazo): Redução de Tamanho de Chunk
-- Chunks atuais: 1600 caracteres com 320 overlap
-- Proposta: Reduzir para 800 caracteres (mais granular, menos ruído)
-- **Trade-off:** Mais chunks indexados (~25-30), mas maior precisão
-- **Benefício:** Reduz contamination; melhora Hit@1 em contextos específicos
+- O principal gargalo atual e o **ranking**: Hit@1 esta em 0%, ou seja, o chunk correto nao aparece em primeiro.
+- Ha tambem **contaminacao de dominio**: cerca de 50% dos top-5 recuperados vem de fontes irrelevantes para a pergunta.
+- As duas falhas estao ligadas: sem priorizacao semantica por contexto, o sistema mistura documentos parecidos por palavra, mas diferentes por intencao.
 
 ---
 
-## 2. Contaminação de Domínio (~50% dos Top-5)
+## 1. Ranking Subotimo (Hit@1 = 0%)
 
-### Problema
-- **Métrica:** ~50% dos top-5 resultados provêm de domínios **irrelevantes**
-- **Exemplo:** Perguntas sobre devolução (POL-001) recuperam muitos chunks de frete (PROC-042)
-- **Caso crítico:** Pergunta 4 teve PROC-042 em posições 1, 3 antes do correto POL-001 em 4
+### Sinal do Problema
+
+- **Metrica:** Hit@1 = 0% (a resposta correta nunca aparece na posicao 1).
+- **Evidencia:** Na pergunta 4 ("Posso devolver carga perigosa?"), a resposta correta (POL-001, secao 3.2) apareceu apenas na **posicao 4**.
+
+### Impacto
+
+- O LLM recebe contexto desordenado.
+- O chunk correto perde prioridade.
+- A chance de resposta final incorreta aumenta.
 
 ### Causa Raiz
-Palavras-chave compartilhadas geram similaridade espúria:
-- "perigosa" aparece em: POL-001 (devolução proibida) E PROC-042 (frete especial)
-- "especial" aparece em: PROC-042 (frete) E FAQ (atendimento)
-- Embeddings capturam token overlap sem considerar contexto de domínio
 
-### Propostas de Solução
+A similaridade por cosseno, isoladamente, nao captura bem:
 
-#### Correção 1 (Curto Prazo): Filtragem Pós-Retrieval por Confiança
-- Implementar score threshold com fallback inteligente
-- Rejeitar chunks com score < threshold E categoria mismatch
-- **Benefício:** Reduz ruído imediato em 30-40%
-- **Risco:** Pode rejeitar chunks válidos; requer tuning manual
+- especificidade da pergunta em relacao ao documento;
+- hierarquia de relevancia semantica;
+- contexto de dominio (ex.: "perigosa" em frete vs "perigosa" em devolucao).
 
-#### Correção 2 (Médio Prazo): Inferência de Categoria Pré-Query
-- Usar zero-shot classification LLM para categorizar pergunta
-- Retornar chunks apenas de categorias relevantes (ex: "devolução" → filtro POL-001)
-- **Benefício:** Reduz ruído para <20%; melhora Hit@1 para 70%+
-- **Complexidade:** Requer LLM call + classificação; +50-100ms latência
+### Propostas de Melhoria
 
-#### Correção 3 (Longo Prazo): Embeddings Scoped por Domínio
-- Treinar embeddings separados por domínio (devolução, frete, SLA, FAQ)
-- Query router: seleciona embedding model + collection conforme categoria
-- **Benefício:** Elimina contamination; máxima precisão
-- **Complexidade:** Alta (requer dados etiquetados por domínio, re-treinamento)
+#### 1. Curto Prazo: Reranking com Cross-Encoder
+
+- Implementar camada de reranking com um modelo cross-encoder (ex.: `ms-marco-MiniLM-L-12-v2`).
+- Pipeline sugerido: Dense Retrieval (top-5) -> Cross-Encoder Reranking -> Top-1.
+- **Ganho estimado:** Hit@1 pode subir para 80%+.
+- **Esforco:** medio (latencia adicional de ~100 ms).
+
+#### 2. Medio Prazo: Filtragem por Categoria (Pre e Pos-Query)
+
+- **Pre-query:** classificar a pergunta em categoria (devolucao, frete, SLA etc.).
+- **Pos-retrieval:** aplicar filtro ou peso por categoria inferida.
+- **Ganho estimado:** reducao de ruido em ~50%; Hit@1 pode chegar a 60%+.
+- **Esforco:** medio (classificador dedicado ou chamada de LLM).
+
+#### 3. Longo Prazo: Reducao do Tamanho de Chunk
+
+- Estado atual: chunks de 1600 caracteres com overlap de 320.
+- Proposta: chunks de 800 caracteres para maior granularidade.
+- **Trade-off:** aumento no numero de chunks indexados (~25-30).
+- **Ganho estimado:** menos contaminacao e melhor precisao em consultas especificas.
 
 ---
+
+## 2. Contaminacao de Dominio (~50% dos Top-5)
+
+### Sinal do Problema
+
+- **Metrica:** ~50% dos top-5 recuperados vem de dominios irrelevantes.
+- **Exemplo:** perguntas sobre devolucao (POL-001) recuperam varios chunks de frete (PROC-042).
+- **Caso critico:** na pergunta 4, chunks de PROC-042 apareceram nas posicoes 1 e 3, antes do chunk correto de POL-001 (posicao 4).
+
+### Impacto
+
+- O contexto recuperado fica poluido.
+- O gerador recebe evidencias conflitantes.
+- A confiabilidade da resposta final cai.
+
+### Causa Raiz
+
+Palavras compartilhadas geram similaridade espuria:
+
+- "perigosa" aparece em POL-001 (devolucao proibida) e PROC-042 (frete especial);
+- "especial" aparece em PROC-042 (frete) e FAQ (atendimento);
+- embeddings capturam sobreposicao lexical sem considerar bem o dominio.
+
+### Propostas de Melhoria
+
+#### 1. Curto Prazo: Filtragem Pos-Retrieval por Confianca
+
+- Definir threshold de score com fallback controlado.
+- Rejeitar chunks com score abaixo do limite e mismatch de categoria.
+- **Ganho estimado:** reducao de ruido em 30-40%.
+- **Risco:** descartar chunk valido se o threshold estiver agressivo demais.
+
+#### 2. Medio Prazo: Inferencia de Categoria Pre-Query
+
+- Usar classificacao zero-shot com LLM para inferir o dominio da pergunta.
+- Recuperar ou priorizar apenas categorias relevantes (ex.: "devolucao" -> POL-001).
+- **Ganho estimado:** ruido abaixo de 20%; Hit@1 pode chegar a 70%+.
+- **Esforco:** medio (chamada adicional de LLM, +50 a 100 ms).
+
+#### 3. Longo Prazo: Embeddings por Dominio
+
+- Manter embeddings e colecoes separados por dominio (devolucao, frete, SLA, FAQ).
+- Adicionar um query router para selecionar a colecao/modelo correto antes da busca.
+- **Ganho estimado:** minimiza contaminacao e maximiza precisao.
+- **Esforco:** alto (dados rotulados, treino e manutencao de multiplos indices).
+
+---
+
+## Priorizacao Recomendada
+
+1. Implementar reranking com cross-encoder (ganho rapido em ranking).
+2. Adicionar filtro por categoria com threshold de confianca (reduz ruido).
+3. Revisar chunking para 800 caracteres e reavaliar metricas.
+4. Evoluir para arquitetura por dominio (router + indices separados), se o volume justificar.
