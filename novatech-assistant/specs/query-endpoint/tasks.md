@@ -6,6 +6,16 @@
 
 ---
 
+## Legenda de Estimativas (T-shirt sizing)
+
+| Sigla | Significado | Interpretação típica |
+|-------|-------------|---------------------|
+| **P** | Pequeno | ~1-3 horas, baixa complexidade |
+| **M** | Médio | ~4-8 horas, complexidade moderada |
+| **G** | Grande | ~1-2 dias, alta complexidade |
+
+---
+
 ## T-001 — Setup do endpoint HTTP com validação de input
 
 **Descrição:** Criar o handler da Azure Function para POST /api/query com validação de input usando Zod.
